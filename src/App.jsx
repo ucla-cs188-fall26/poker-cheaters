@@ -4,12 +4,13 @@ import Sidebar from './components/Sidebar.jsx'
 import AuthGate from './components/AuthGate.jsx'
 import LandingPage from './pages/LandingPage.jsx'
 import HomePage from './pages/HomePage.jsx'
-import LivePage from './pages/LivePage.jsx'
 import SessionsPage from './pages/SessionsPage.jsx'
 import SessionDetailPage from './pages/SessionDetailPage.jsx'
 import OpponentsPage from './pages/OpponentsPage.jsx'
 import InsightsPage from './pages/InsightsPage.jsx'
 import SettingsPage from './pages/SettingsPage.jsx'
+import TrackerPage from './pages/TrackerPage.jsx'
+import PlayerProfilePage from './pages/PlayerProfilePage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import { getCurrentUser, logout } from './helpers/auth.js'
 import './App.css'
@@ -46,7 +47,8 @@ function App() {
     }
   }
 
-  const showSidebar = Boolean(user) && !STANDALONE_PATHS.includes(pathname)
+  const signedInPage = Boolean(user) && !STANDALONE_PATHS.includes(pathname)
+  const showSidebar = signedInPage
 
   function priv(element) {
     return (
@@ -67,19 +69,22 @@ function App() {
   return (
     <div className="app">
       {showSidebar && <Sidebar user={user} onLogout={handleLogout} />}
-      <main className={showSidebar ? 'app-content' : 'app-content-full'}>
+      <div className="app-column">
+        <main className={showSidebar ? 'app-content' : 'app-content-full'}>
         <Routes>
           <Route path="/" element={guest(<LandingPage />)} />
           <Route path="/login" element={guest(<LoginPage />)} />
           <Route path="/home" element={priv(<HomePage user={user} />)} />
-          <Route path="/live" element={priv(<LivePage />)} />
           <Route path="/sessions" element={priv(<SessionsPage />)} />
           <Route path="/sessions/:sessionId" element={priv(<SessionDetailPage />)} />
+          <Route path="/track/:sessionId" element={priv(<TrackerPage />)} />
           <Route path="/opponents" element={priv(<OpponentsPage />)} />
+          <Route path="/opponents/:playerId" element={priv(<PlayerProfilePage />)} />
           <Route path="/insights" element={priv(<InsightsPage />)} />
           <Route path="/settings" element={priv(<SettingsPage />)} />
         </Routes>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }

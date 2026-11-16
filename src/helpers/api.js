@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-// Shared axios instance. All API queries should go through this.
+// Shared axios instance. All API queries go through this.
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
 })

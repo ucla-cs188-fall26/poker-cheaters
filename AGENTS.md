@@ -20,19 +20,18 @@ Only `App.jsx`, `App.css`, `main.jsx`, and `index.css` live at the `src/` root.
 
 ## Login and backend
 
-The project has two backends:
+The app runs on Vercel alone: static frontend plus serverless functions in `api/` (Node), with Neon Postgres.
 
-- **Login:** Vercel serverless functions in `api/` (Node), described in this section.
-- **Predictions:** FastAPI in `backend/` (Python), described under [Backend](#backend) below.
-
-Still to agree as a team: how both run together locally, where FastAPI is hosted in production, and whether both use the same database.
+- **Login** (`api/auth/*`) is described below.
+- **Card tracker** (`api/opponents.js`, `sessions.js`, `hands.js`, `actions.js`) is described under [Card tracker](#card-tracker).
+- The FastAPI prediction skeleton in `backend/` is **dormant**: it isn't deployed or called by the frontend. See [Backend](#backend-dormant).
 
 - The username/password form on the login page is visual only (non-functioning). Do not add password auth unless asked.
 - Google OAuth is the working login. The login backend is Vercel serverless functions in `api/` (`api/auth/google.js`, `api/auth/google/callback.js`, `api/auth/me.js`, `api/auth/logout.js`), with shared code in `api/_lib/`. Database is Postgres (Neon) via `@neondatabase/serverless`; schema is in `db/schema.sql`.
 - Sessions are httpOnly cookies; only a sha256 hash of the token is stored in `auth_sessions`.
 - Secrets (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL`, `APP_URL`) live only in `.env.local` and Vercel env vars. Never commit them or paste them into chat. `.env.example` lists the names.
 - Frontend calls to the API still go through the axios instance (`helpers/api.js`, `helpers/auth.js`). The Google button is a plain link to `/api/auth/google`, because it is a browser redirect, not an API query.
-- Run locally with `vercel dev` (port 3000) so the `api/` functions work. Plain `npm run dev` forwards every `/api` request to FastAPI on port 8000 (see `vite.config.js`), so login doesn't work there.
+- Run locally with `vercel dev` (port 3000) so the `api/` functions work. Plain `npm run dev` serves only the frontend, so login and the tracker don't work there. `vercel env pull` can't fetch Sensitive values, so copy the Google and Neon values in by hand (see `.env.example`).
 
 ## Uploaded artifacts (zips, HTML, mockups)
 
@@ -54,6 +53,19 @@ Never copy an uploaded artifact in word for word. Always refactor it to follow t
 
 - All API queries use `axios`, through the shared instance in `helpers/api.js`. Do not use `fetch`.
 - Base URL comes from `VITE_API_URL` (defaults to `/api`).
+- Tracker calls are wrapped in `helpers/tracker.js` (one function per endpoint, plus `apiErrorText` for readable errors).
+
+## Card tracker
+
+One person logs a game at a real or online table: they pick an opponent, tap what that opponent did, get a bluff read on every bet or raise, and enter the cards an opponent shows. Nothing is real-time or multi-user, so it needs no WebSocket and fits on Vercel alone.
+
+- **Pages:** `SessionsPage` (start or resume), `TrackerPage` at `/track/:sessionId` (the live screen), `SessionDetailPage` (review), `OpponentsPage` / `PlayerProfilePage` (profiles).
+- **Data:** tables `tracker_opponents`, `tracker_sessions`, `tracker_hands`, `tracker_actions` in `db/schema.sql`. Everything belongs to one user, and every query filters by the logged-in user's id (see `ownedSession` etc. in `api/_lib/tracker.js`). Opponents are names the user types in, not accounts.
+- **Scoring** lives in `api/_lib/`: `scoring.js` (hand-set rules on the bet and board, plus the face score, fused as log-odds), `bluffRule.js` (the label), `handEval.js`, `cards.js`. The estimate is **uncalibrated**: never call it a probability.
+- **A bluff label** comes only from cards the user enters at showdown (`PATCH /api/hands` with `shown`). A bet is never given a label otherwise, and the opponent's cards are never an input to the read. `bluffRule.js` is a working definition that needs team sign-off before the labels are used for training.
+- **Face reads** run in the user's own browser (`helpers/useFaceRead.js`). `helpers/faceCollector.js` boils the last 6 seconds down to `{ samples, trackedRatio, meanScore, deviations }`, and only that is sent with a logged action. Never send or store video, audio or landmarks. Tell evidence has log-odds 0, so it feeds the opponent profile and never changes the score.
+- **Adding a function:** each file in `api/` is one serverless function (Vercel's Hobby plan allows 12), so group methods in one file using `route()` from `api/_lib/http.js` and pass ids as `?id=`.
+- **Tests:** there is no JS test runner yet. When changing `api/_lib/`, check it against known hands and bluff cases before relying on it.
 
 ## Commands
 
@@ -61,7 +73,9 @@ Never copy an uploaded artifact in word for word. Always refactor it to follow t
 - `npm run build` — production build
 - `npm run lint` — lint
 
-# Backend
+# Backend (dormant)
+
+**Not deployed and not used by the frontend.** The live-rooms work that once lived here was removed when the app moved to Vercel alone (it is in git history, commit `f0fc29a`). The rest is kept for now so teammates' prediction/ML work isn't lost, and may be deleted later.
 
 The prediction backend: FastAPI (Python 3.12 or 3.13) under `backend/`, with a local Postgres in Docker. This database is separate from the Neon database the login uses. Run commands from `backend/` with the virtual environment active.
 

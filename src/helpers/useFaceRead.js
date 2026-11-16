@@ -1,12 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
-import { createFaceLandmarker } from '../helpers/faceLandmarker.js'
-import { createAccumulator, addSample, finalizeBaseline, deviations, deviationScore } from '../helpers/baselineStats.js'
-import { framingIssue, createHistory, sustainedRead, expressionSummary } from '../helpers/faceRead.js'
-import './FaceAnalysis.css'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createFaceLandmarker } from './faceLandmarker.js'
+import {
+  createAccumulator,
+  addSample,
+  finalizeBaseline,
+  deviations,
+  deviationScore,
+} from './baselineStats.js'
+import { framingIssue, createHistory, sustainedRead } from './faceRead.js'
 
-const CALIBRATION_MS = 10000
+export const CALIBRATION_MS = 10000
 
-function FaceAnalysis({ videoRef }) {
+// Runs the in-browser face model on a <video> element: calibrates a neutral baseline,
+// then reports how far the face moves from it. Nothing leaves the browser.
+//
+// onSample (optional) is called for every analysed frame with
+//   { tracking, score, rows }  where rows are { name, z } sorted by strength.
+// score is the 0-10 sustained expression change, or 0 while there is no baseline.
+export function useFaceRead(videoRef, onSample) {
   const [status, setStatus] = useState('Loading face model…')
   const [error, setError] = useState(null)
   const [tracking, setTracking] = useState(false)
@@ -16,9 +27,15 @@ function FaceAnalysis({ videoRef }) {
   const [rows, setRows] = useState([])
   const [settled, setSettled] = useState(false)
   const analysis = useRef({ accumulator: null, baseline: null, elapsed: 0, history: createHistory() })
+  const sampleRef = useRef(onSample)
+
+  useEffect(() => {
+    sampleRef.current = onSample
+  }, [onSample])
 
   useEffect(() => {
     const state = { cancelled: false, model: null, frame: null, lastTime: -1, lastRun: 0, smoothed: null }
+
     function loop(now) {
       if (state.cancelled) return
       state.frame = requestAnimationFrame(loop)
@@ -38,6 +55,7 @@ function FaceAnalysis({ videoRef }) {
           setTracking(false)
           setRows([])
           setStatus((issue || 'No face detected.') + ' Read paused.')
+          sampleRef.current?.({ tracking: false, score: 0, rows: [] })
           return
         }
         const prior = state.smoothed
@@ -66,8 +84,14 @@ function FaceAnalysis({ videoRef }) {
           const read = sustainedRead(current.history, now, deviations(current.baseline, categories))
           setRows(read.rows)
           setSettled(read.ready)
+          sampleRef.current?.({
+            tracking: true,
+            score: read.ready ? deviationScore(read.rows) : 0,
+            rows: read.ready ? read.rows : [],
+          })
         } else {
           setRows([])
+          sampleRef.current?.({ tracking: true, score: 0, rows: [] })
         }
       } catch {
         cancelAnimationFrame(state.frame)
@@ -76,6 +100,7 @@ function FaceAnalysis({ videoRef }) {
         setError('Face analysis stopped. End the session and start again to retry.')
       }
     }
+
     async function start() {
       try {
         const model = await createFaceLandmarker()
@@ -97,48 +122,14 @@ function FaceAnalysis({ videoRef }) {
     }
   }, [videoRef])
 
-  function calibrate() {
+  const calibrate = useCallback(() => {
     analysis.current = { accumulator: createAccumulator(), baseline: null, elapsed: 0, history: createHistory() }
     setSettled(false)
     setProgress(0)
     setRows([])
     setHasBaseline(false)
     setCalibrating(true)
-  }
+  }, [])
 
-  return (
-    <section className="face-analysis" aria-label="Facial expression analysis">
-      <h3 className="face-analysis-title">Facial expression analysis</h3>
-      <p className="face-analysis-note">Calibrate your relaxed face for about 10 seconds. Only well-framed samples count. Keep lighting and camera position steady; relax and blink naturally.</p>
-      {error ? <p className="face-analysis-error" role="alert">{error}</p> : (
-        <>
-          <button className="face-analysis-button" type="button" onClick={calibrate} disabled={!tracking || calibrating}>
-            {calibrating ? 'Calibrating…' : hasBaseline ? 'Recalibrate' : 'Calibrate neutral face'}
-          </button>
-          <p className="face-analysis-status" role="status">{status}</p>
-          {calibrating && <progress className="face-analysis-progress" max={CALIBRATION_MS} value={progress} aria-label="Calibration progress" />}
-          {hasBaseline && tracking && !settled && <p className="face-analysis-status">Collecting a steady read…</p>}
-          {tracking && settled && rows.length > 0 && (
-            <>
-              <p className="face-analysis-score"><strong>{deviationScore(rows).toFixed(1)} / 10</strong> sustained expression change</p>
-              <p className="face-analysis-summary">{expressionSummary(rows)}</p>
-              <ul className="face-analysis-list">
-                {rows.slice(0, 6).map(({ name, z }) => (
-                  <li className="face-analysis-row" key={name}>
-                    <span>{name.replace(/([A-Z])/g, ' $1')}</span>
-                    <meter className="face-analysis-meter" min="0" max="4" value={Math.min(4, Math.abs(z))} aria-label={`${name} deviation magnitude`} />
-                    <span>{z >= 0 ? '+' : ''}{z.toFixed(1)}σ</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </>
-      )}
-      <p className="face-analysis-note">Readings average the last 1.5 seconds. Normal blinks and gaze shifts are excluded from the headline score. This score describes estimated expression changes. It does not determine mood or bluff probability.</p>
-    </section>
-  )
+  return { status, error, tracking, calibrating, progress, hasBaseline, rows, settled, calibrate }
 }
-
-export default FaceAnalysis
-

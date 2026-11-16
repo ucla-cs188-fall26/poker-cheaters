@@ -1,0 +1,77 @@
+.sessioncard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--tell-border);
+  border-radius: 20px;
+  background: var(--tell-surface);
+  color: var(--tell-text);
+  text-decoration: none;
+  animation: sessioncard-in 0.5s var(--tell-ease) both;
+  transition: border-color 0.2s, transform 0.25s var(--tell-ease);
+}
+
+.sessioncard:hover {
+  border-color: var(--tell-gold);
+  transform: translateY(-3px);
+}
+
+.sessioncard-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.sessioncard-date {
+  font-size: 14px;
+  color: var(--tell-muted);
+}
+
+.sessioncard-status {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--tell-bg);
+  color: var(--tell-dim);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.sessioncard-open {
+  color: var(--tell-green);
+}
+
+.sessioncard-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-weight: 700;
+  font-size: 20px;
+}
+
+.sessioncard-players {
+  font-size: 14px;
+  color: var(--tell-muted);
+}
+
+.sessioncard-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 14px;
+  color: var(--tell-muted);
+}
+
+.sessioncard-stats strong {
+  color: var(--tell-text);
+}
+
+@keyframes sessioncard-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
