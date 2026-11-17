@@ -42,6 +42,8 @@ export default route({
     if (!STREETS.includes(body.street)) throw new HttpError(400, 'Invalid street')
     if (!ACTIONS.includes(body.action)) throw new HttpError(400, 'Invalid action')
     const aggressive = body.action === 'bet' || body.action === 'raise'
+    // potSize is the pot before this bet. For a raise, betSize is the total they raised to
+    // (not the extra on top); the training export makes the same assumption.
     const betSize = chips(body.betSize, 'bet size')
     const potSize = chips(body.potSize, 'pot size')
     if (body.action === 'call' && betSize === 0) throw new HttpError(400, 'Enter how much they called')
@@ -61,16 +63,23 @@ export default route({
     if (position !== null && !POSITIONS.includes(position)) throw new HttpError(400, 'Invalid position')
 
     const face = cleanFace(body.face)
-    let scored = { probability: null, reasons: [], tells: [] }
+    let scored = { probability: null, reasons: [], tells: [], version: null }
     if (aggressive) {
       const prior = await sql`
         select street, action from tracker_actions
         where hand_id = ${hand.id} and opponent_id = ${opponent.id}
         order by created_at
       `
+      // Their record from earlier hands only, so this hand's own showdown can't feed its read.
+      const [history] = await sql`
+        select count(*)::int as labeled, count(*) filter (where was_bluff)::int as bluffs
+        from tracker_actions
+        where opponent_id = ${opponent.id} and hand_id <> ${hand.id} and was_bluff is not null
+      `
       scored = scoreBet(
         {
           street: body.street,
+          action: body.action,
           board,
           betSize,
           potSize,
@@ -78,6 +87,7 @@ export default route({
           position,
           priorActions: prior,
           myCards: hand.my_cards,
+          history,
         },
         face,
       )
@@ -86,12 +96,12 @@ export default route({
     const [row] = await sql`
       insert into tracker_actions
         (hand_id, session_id, opponent_id, street, action, bet_size, pot_size, active_players, position,
-         board, face, probability, reasons, tells)
+         board, face, probability, reasons, tells, score_version)
       values
         (${hand.id}, ${hand.session_id}, ${opponent.id}, ${body.street}, ${body.action}, ${betSize}, ${potSize},
          ${activePlayers}, ${position}, ${JSON.stringify(board)}::jsonb,
          ${face ? JSON.stringify(face) : null}::jsonb, ${scored.probability},
-         ${JSON.stringify(scored.reasons)}::jsonb, ${JSON.stringify(scored.tells)}::jsonb)
+         ${JSON.stringify(scored.reasons)}::jsonb, ${JSON.stringify(scored.tells)}::jsonb, ${scored.version})
       returning *
     `
     res.statusCode = 201

@@ -24,6 +24,8 @@ dev = ["httpx2>=2.0.0", "pytest>=8.3", "ruff>=0.6"]
 # 3.12 if a package has no wheel for your version yet.
 facial = ["mediapipe", "numpy", "opencv-python-headless"]
 speech = ["faster-whisper", "librosa", "numpy"]
+# For training/statistics/train.py only. The live app never needs it.
+training = ["numpy", "scikit-learn"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

@@ -15,7 +15,7 @@ function ActionForm({ opponents, street, pot, onPot, onSubmit, onAddOpponent, bu
   const [opponentId, setOpponentId] = useState('')
   const [action, setAction] = useState('bet')
   const [betSize, setBetSize] = useState('')
-  const [activePlayers, setActivePlayers] = useState('2')
+  const [activePlayers, setActivePlayers] = useState('')
   const [position, setPosition] = useState('')
   const [newName, setNewName] = useState('')
   const [addError, setAddError] = useState(null)
@@ -147,6 +147,7 @@ function ActionForm({ opponents, street, pot, onPot, onSubmit, onAddOpponent, bu
               inputMode="numeric"
               min="2"
               max="10"
+              placeholder="2"
               value={activePlayers}
               onChange={(event) => setActivePlayers(event.target.value)}
             />
