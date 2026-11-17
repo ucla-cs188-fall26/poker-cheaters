@@ -78,6 +78,9 @@ create table if not exists tracker_actions (
   created_at      timestamptz not null default now()
 );
 
+-- Which version of the scoring weights produced the estimate (see api/_lib/statisticsWeights.js).
+alter table tracker_actions add column if not exists score_version text;
+
 create index if not exists tracker_actions_hand_idx on tracker_actions(hand_id, created_at);
 create index if not exists tracker_actions_opponent_idx on tracker_actions(opponent_id);
 create index if not exists tracker_actions_session_idx on tracker_actions(session_id);

@@ -1,13 +1,17 @@
-// Turns one bet or raise into a bluff estimate: hand-set rules on the bet and the board, plus
-// the browser's face score, fused as log-odds. Placeholders chosen by hand, not fitted to data,
-// so the output is an uncalibrated estimate and must never be described as a probability.
+// Turns one bet or raise into a bluff estimate: features of the bet and the board, weighted by
+// statisticsWeights.js, plus the browser's face score, fused as log-odds. The weights are
+// hand-set until a fit replaces them, so the output is an uncalibrated estimate and must never
+// be described as a probability.
 //
 // Positive log-odds mean toward a bluff. Every reason shown to the user is a real term of the sum.
 import { RANKS } from './cards.js'
+import weights from './statisticsWeights.js'
 
-export const SCORING_VERSION = 'baseline-0.1'
+export const SCORING_VERSION = weights.version
+// Every statistics feature, in a fixed order. The training export uses this as its columns.
+export const STATISTICS_CODES = Object.keys(weights.weights)
 
-const PRIOR = 0.35
+const PRIOR = weights.prior
 const WEIGHTS = { statistics: 1.0, live_facial: 0.5 }
 const MAX_REASONS = 3
 const MIN_CONTRIBUTION = 0.01
@@ -15,6 +19,7 @@ const MIN_CONTRIBUTION = 0.01
 const LARGE_BET_RATIO = 0.75
 const OVERBET_RATIO = 1.25
 const SMALL_BET_RATIO = 0.33
+const STREET_ORDER = ['preflop', 'flop', 'turn', 'river']
 
 const logit = (p) => Math.log(p / (1 - p))
 const sigmoid = (x) => 1 / (1 + Math.exp(-x))
@@ -25,6 +30,7 @@ const countBy = (items) => {
   for (const item of items) counts[item] = (counts[item] ?? 0) + 1
   return counts
 }
+const isAggressive = (a) => a.action === 'bet' || a.action === 'raise'
 
 // Three board cards within a five-rank window let two hole cards make a straight.
 function straightPossible(ranks) {
@@ -50,82 +56,139 @@ function missedFlushDraw(board) {
   return Math.max(...Object.values(turnSuits)) === 2 && (turnSuits[board[4][1]] ?? 0) < 2
 }
 
-const evidence = (code, description, logOdds) => ({ code, description, logOdds })
+// A feature is one input to the sum: its value times its weight is its log-odds.
+// Rules that fire have value 1; the numeric features carry their own value.
+const feature = (code, description, value = 1) => ({ code, description, value })
 
-function betSizeEvidence(state, ratio) {
+function betSizeFeatures(state, ratio) {
   const items = []
   if (ratio >= OVERBET_RATIO) {
-    items.push(evidence('overbet', `Bet is ${ratio.toFixed(1)}x the pot, a size often used to force folds`, 0.6))
+    items.push(feature('overbet', `Bet is ${ratio.toFixed(1)}x the pot, a size often used to force folds`))
   } else if (ratio <= SMALL_BET_RATIO) {
-    items.push(
-      evidence('small_bet', `Bet is only ${Math.round(ratio * 100)}% of the pot, which pressures few hands`, -0.3),
-    )
+    items.push(feature('small_bet', `Bet is only ${Math.round(ratio * 100)}% of the pot, which pressures few hands`))
   }
   if (state.street !== 'preflop' && ratio >= LARGE_BET_RATIO && isDry(state.board)) {
-    items.push(evidence('large_bet_on_dry_board', 'Large bet on a dry board, where few strong hands are likely', 0.5))
+    items.push(feature('large_bet_on_dry_board', 'Large bet on a dry board, where few strong hands are likely'))
   }
   if (state.street === 'river' && ratio >= LARGE_BET_RATIO && missedFlushDraw(state.board)) {
-    items.push(evidence('missed_flush_draw', 'Large river bet after a flush draw missed', 0.4))
+    items.push(feature('missed_flush_draw', 'Large river bet after a flush draw missed'))
+  }
+  if (state.street !== 'preflop') {
+    items.push(feature('log_bet_to_pot', `Bet is ${Math.round(ratio * 100)}% of the pot`, Math.log(ratio)))
   }
   return items
 }
 
-function tableEvidence(state) {
+function tableFeatures(state) {
   const items = []
   if (state.activePlayers >= 3) {
     items.push(
-      evidence(
+      feature(
         'multiway_pot',
         `${state.activePlayers} players are still in, and bluffs rarely work against several opponents`,
-        -0.5,
       ),
     )
   }
   if (state.street === 'preflop') {
     if (state.position === 'late') {
-      items.push(evidence('late_position_raise', 'Raise from late position, a common spot to steal the blinds', 0.4))
+      items.push(feature('late_position_raise', 'Raise from late position, a common spot to steal the blinds'))
     } else if (state.position === 'early') {
-      items.push(
-        evidence('early_position_raise', 'Raise from early position, which usually shows a strong range', -0.5),
-      )
+      items.push(feature('early_position_raise', 'Raise from early position, which usually shows a strong range'))
     }
   }
   return items
 }
 
-function lineEvidence(state, ratio) {
+function lineFeatures(state, ratio) {
+  const items = []
+  const earlier = state.priorActions.filter((a) => STREET_ORDER.indexOf(a.street) < STREET_ORDER.indexOf(state.street))
+  const barrels = new Set(earlier.filter(isAggressive).map((a) => a.street)).size
+  if (barrels > 0) {
+    items.push(
+      feature('barrel_count', `Bet or raised on ${barrels} earlier street${barrels === 1 ? '' : 's'} this hand`, barrels),
+    )
+  }
+  if (state.action === 'raise' && state.street !== 'preflop') items.push(feature('raise', 'Raised instead of betting first'))
+
   const postflop = state.priorActions.filter((a) => a.street !== 'preflop')
-  if (postflop.length === 0 || ratio < LARGE_BET_RATIO) return []
+  if (postflop.length === 0 || ratio < LARGE_BET_RATIO) return items
   if (postflop.every((a) => a.action === 'check' || a.action === 'call')) {
-    return [evidence('sudden_aggression', 'Large bet after only checking or calling on earlier streets', 0.3)]
+    items.push(feature('sudden_aggression', 'Large bet after only checking or calling on earlier streets'))
+  } else if (postflop.every(isAggressive)) {
+    items.push(feature('consistent_aggression', 'Has bet or raised on every earlier street, a consistent story'))
   }
-  if (postflop.every((a) => a.action === 'bet' || a.action === 'raise')) {
-    return [evidence('consistent_aggression', 'Has bet or raised on every earlier street, a consistent story', -0.2)]
-  }
-  return []
+  return items
 }
 
-function blockerEvidence(state) {
+// What the board looks like when the bet is made. Postflop only.
+function boardFeatures(state) {
+  const { board, street } = state
+  if (street === 'preflop' || board.length === 0) return []
+  const items = []
+  const ranks = board.map(rankIndex)
+  if (new Set(ranks).size !== ranks.length) items.push(feature('paired_board', 'The board is paired'))
+  items.push(feature(`street_${street}`, `Bet came on the ${street}`))
+  if (street === 'turn' || street === 'river') {
+    const latest = board[board.length - 1]
+    const earlier = ranks.slice(0, -1)
+    if ('AK'.includes(latest[0]) || rankIndex(latest) > Math.max(...earlier)) {
+      items.push(feature('scare_card', `The ${street} brought a high card that changes the board`))
+    }
+    if (countBy(board.map((c) => c[1]))[latest[1]] === 3) {
+      items.push(feature('flush_completed', `The ${street} put three of one suit on the board`))
+    }
+  }
+  return items
+}
+
+function blockerFeatures(state) {
   if (state.myCards.length === 0 || state.board.length === 0) return []
   const counts = countBy(state.board.map((c) => c[1]))
   const [suit, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
   if (count >= 3 && state.myCards.includes(`A${suit}`)) {
-    return [evidence('observer_blocks_nut_flush', "You hold the flush suit's ace, so they can't have the nut flush", 0.35)]
+    return [feature('observer_blocks_nut_flush', "You hold the flush suit's ace, so they can't have the nut flush")]
   }
   return []
 }
 
-// Rule-based read of the bet and the board.
-function statisticsSignal(state) {
+// Every feature of one bet. Live scoring and the training export both call this, so the
+// model is trained on exactly what it is served. Never add the bettor's own cards here.
+export function statisticsFeatures(state) {
   const ratio = state.betSize / state.potSize
+  return [
+    ...betSizeFeatures(state, ratio),
+    ...tableFeatures(state),
+    ...lineFeatures(state, ratio),
+    ...boardFeatures(state),
+    ...blockerFeatures(state),
+  ]
+}
+
+// How often this opponent's earlier shown bets were bluffs, pulled toward the prior so one
+// or two showdowns can't swing the read. No history means no term.
+function historyEvidence(history) {
+  if (!history || !(history.labeled > 0)) return []
+  const { weight, strength } = weights.history
+  const rate = (history.bluffs + strength * PRIOR) / (history.labeled + strength)
+  return [
+    evidence(
+      'opponent_bluff_rate',
+      `Has bluffed ${history.bluffs} of ${history.labeled} shown bets in earlier hands`,
+      weight * (logit(rate) - logit(PRIOR)),
+    ),
+  ]
+}
+
+const evidence = (code, description, logOdds) => ({ code, description, logOdds })
+
+// The bet and the board, weighted by statisticsWeights.js, plus the opponent's history.
+function statisticsSignal(state) {
   return {
     name: 'statistics',
-    confidence: state.street === 'preflop' ? 0.5 : 0.8,
+    confidence: state.street === 'preflop' ? weights.confidence.preflop : weights.confidence.postflop,
     evidence: [
-      ...betSizeEvidence(state, ratio),
-      ...tableEvidence(state),
-      ...lineEvidence(state, ratio),
-      ...blockerEvidence(state),
+      ...statisticsFeatures(state).map((f) => evidence(f.code, f.description, f.value * (weights.weights[f.code] ?? 0))),
+      ...historyEvidence(state.history),
     ],
   }
 }
@@ -186,7 +249,8 @@ function faceSignal(face) {
   }
 }
 
-// state: { street, board, betSize, potSize, activePlayers, position, priorActions, myCards }
+// state: { street, action, board, betSize, potSize, activePlayers, position, priorActions, myCards,
+//          history: { labeled, bluffs } or absent }
 // face:  { samples, trackedRatio, meanScore, deviations: [{ name, z }] } or null.
 // Returns { probability, reasons, tells, version }. Reasons are the strongest terms of the sum.
 export function scoreBet(state, face) {
